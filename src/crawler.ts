@@ -1,6 +1,8 @@
 // src/crawler.ts
 
 import * as https from 'https';
+import * as fs from 'fs'; // 설정 파일 읽기를 위해 fs 모듈 추가
+import * as path from 'path'; // 경로 처리를 위해 path 모듈 추가
 import * as admin from 'firebase-admin'; // Firebase Admin SDK import 추가
 // v2 API는 JSON을 반환하므로 xml2js는 더 이상 필요하지 않습니다.
 // import { parseStringPromise } from 'xml2js';
@@ -8,9 +10,34 @@ import { getFirestore } from './firebase';
 import { EverytimeArticle, FirestoreArticle } from './types';
 import { logChange } from './logger';
 
+// --- 설정 로드 ---
+interface CrawlConfig {
+  boardId: string;
+  limitNum: number;
+  intervalMinutes: number; // 스케줄러 설정 참고용
+}
+
+let config: CrawlConfig;
+try {
+  const configPath = path.resolve(__dirname, '../crawlconfig.json');
+  const configRaw = fs.readFileSync(configPath, 'utf-8');
+  config = JSON.parse(configRaw);
+  console.log('Crawl configuration loaded:', config);
+} catch (error) {
+  console.error('Failed to load crawlconfig.json. Using default values or exiting.', error);
+  // 기본값 설정 또는 프로세스 종료
+  config = {
+    boardId: '393752', // 기본 게시판 ID
+    limitNum: 5,       // 기본 limit
+    intervalMinutes: 2 // 기본 주기
+  };
+  // 또는 process.exit(1); 로 종료할 수도 있습니다.
+}
+
 // --- 설정 부분 ---
 // 실제 크롤링할 게시판 ID를 입력하세요 (예: 393752는 자유게시판)
-const TARGET_BOARD_ID = '393752';
+// const TARGET_BOARD_ID = '393752'; // 하드코딩 대신 config 사용
+// const LIMIT_NUM = 5; // 하드코딩 대신 config 사용
 
 // Cookie.txt 파일에서 가져온 쿠키 값
 const EVERYTIME_COOKIE = 'x-et-device=6188842; etsid=s%3AuT72G_sPY1fmhSOPWM58iB9DQ7GgP1mD.K7rfrJgccDwsMMmx3W1YcSkPCO7smcN9VwSywt569Bw; _ga=GA1.1.342229312.1754717565; _ga_85ZNEFVRGL=GS2.1.s1755570953$o46$g1$t1755570989$j24$l0$h0';
@@ -23,19 +50,21 @@ const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 /**
  * 에브리타임 API에서 게시글 목록을 가져옵니다.
  * @param start_num 시작 인덱스 (v2 API에서의 사용 여부 확인 필요)
- * @param limit_num 가져올 게시글 수 (v2 API에서의 사용 여부 확인 필요)
+ * @param limit_num 가져올 게시글 수 (설정 파일에서 읽어옴)
  * @returns 게시글 목록 (Promise)
  */
-const fetchArticlesFromAPI = async (start_num: number, limit_num: number): Promise<EverytimeArticle[]> => {
+const fetchArticlesFromAPI = async (start_num: number, limit_num: number = config.limitNum): Promise<EverytimeArticle[]> => {
   return new Promise((resolve, reject) => {
     // 1. 요청 본문(JSON) 구성
     // 참고: v2 API의 페이징은 start_num/limit_num이 아닐 수 있습니다. 
     // nextArticleId 등을 사용할 수 있으므로, 실제 동작을 확인하고 조정이 필요할 수 있습니다.
+    // HAR 파일 분석에 따라 limit_num 파라미터를 포함해 봅니다.
     const postData = JSON.stringify({
       mode: 'board',
-      boardId: TARGET_BOARD_ID,
+      boardId: config.boardId, // 설정 파일에서 읽은 boardId 사용
+      limit_num: limit_num, // 요청 파라미터로 받은 limit_num 사용
       // isBoardInfoRequired: false // 일반적으로 글 목록만 필요함
-      // limit_num, start_num // v2 API 사용법에 따라 조정 필요
+      // start_num: start_num, // 필요 시 추가
     });
 
     // 2. 요청 옵션 구성
@@ -55,7 +84,7 @@ const fetchArticlesFromAPI = async (start_num: number, limit_num: number): Promi
       }
     };
 
-    // 3. HTTPS 요청 보내기
+    // 2. HTTPS 요청 보내기
     const req = https.request(options, (res) => {
       let data = '';
 
@@ -73,7 +102,10 @@ const fetchArticlesFromAPI = async (start_num: number, limit_num: number): Promi
             // 4. JSON 응답 파싱 및 EverytimeArticle[]로 변환
             // 응답 구조 예시: { status: "success", result: { articles: [...] } }
             if (result.status === 'success' && result.result && Array.isArray(result.result.articles)) {
-              const articles: EverytimeArticle[] = result.result.articles.map((apiArticle: any) => ({
+              // 설정된 limit_num보다 많은 글이 왔을 경우 자름
+              const articlesToProcess = result.result.articles.slice(0, limit_num);
+              
+              const articles: EverytimeArticle[] = articlesToProcess.map((apiArticle: any) => ({
                 id: apiArticle.id.toString(), // ID는 문자열로 변환
                 title: apiArticle.title,
                 text: apiArticle.text,
@@ -82,7 +114,7 @@ const fetchArticlesFromAPI = async (start_num: number, limit_num: number): Promi
                 comment: apiArticle.commentCount, // 필드명 매핑
                 scrap_count: apiArticle.scrapCount // 필드명 매핑
               }));
-              console.log(`API에서 ${articles.length}개의 글을 성공적으로 가져왔습니다.`);
+              console.log(`API에서 ${articles.length}개의 글을 성공적으로 가져왔습니다. (요청 limit: ${limit_num})`);
               resolve(articles);
             } else {
               console.error('예상치 못한 API 응답 구조:', result);
