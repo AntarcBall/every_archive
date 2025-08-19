@@ -178,7 +178,7 @@ const saveNewArticleToDB = async (article: EverytimeArticle): Promise<void> => {
   await db.collection('articles').doc(article.id).set(firestoreArticle);
   console.log(`New article saved to DB: ${article.id}`);
   
-  // 로그 기록
+  // 로그 기록 - 게시글 제목과 내용 모두 저장
   await logChange({
     timestamp: now.toDate().toLocaleString('ko-KR', { 
       month: '2-digit', day: '2-digit', 
@@ -186,9 +186,10 @@ const saveNewArticleToDB = async (article: EverytimeArticle): Promise<void> => {
       hour12: false
     }).replace(', ', ' | ').replace(/\./g, ''),
     type: '글 신규 작성',
-    details: article.title,
-    before: '-', // 신규 작성은 before 값이 없음
-    after: '-', // 신규 작성은 after 값이 없음
+    details: article.title, // 게시글 제목
+    content: article.text,  // 게시글 내용 (새로 추가)
+    before: '-', 
+    after: '-',
     article_id: article.id
   });
 };

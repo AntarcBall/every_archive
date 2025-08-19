@@ -19,11 +19,12 @@ export interface FirestoreArticle extends Omit<EverytimeArticle, 'created_at'> {
   updated_at: firestore.Timestamp;
 }
 
-// 로그 항목 타입
+// 로그 항목 타입 - content 필드 추가
 export interface LogEntry {
   timestamp: string; // MM.DD | HH:MM'SS 형식
   type: '글 신규 작성' | '글 삭제' | '좋아요' | '댓글' | '스크랩';
   details: string; // 게시글 제목
+  content?: string; // 게시글 내용 (선택적, 주로 '글 신규 작성' 로그에 사용) - 새로 추가
   before: number | string;
   after: number | string;
   article_id: string;

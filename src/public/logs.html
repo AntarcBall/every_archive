@@ -112,17 +112,20 @@
                     let after = log.after !== undefined ? log.after : '-';
 
                     if (log.type === '글 신규 작성') {
-                        // '글 신규 작성'의 경우, details가 제목, content가 내용이어야 함.
-                        // 하지만 현재 로그에는 제목만 있고 내용이 없음.
-                        // 만약 원본 글 내용도 로그에 저장하고 싶다면, logger.ts에서 로그 저장 시 추가해야 함.
-                        // 여기서는 details(제목)을 '제목' 열에, 내용은 '-'로 표시.
+                        // '글 신규 작성'의 경우, details(제목)을 '제목' 열에, content(내용)을 '내용' 열에 표시
                         title = details;
-                        content = '-'; // 원본 내용은 로그에 저장되지 않음
+                        content = log.content || '-'; // 로그에 content 필드가 있을 경우 표시
                         details = '-';
                         before = '-';
                         after = '-';
+                    } else if (log.type === '댓글') {
+                        // '댓글'의 경우, details(게시글 제목)을 '제목' 열에도 표시
+                        title = details;
+                        content = '-'; // '댓글' 로그에는 별도의 내용 없음
+                        // details는 원래대로 표시
+                        // before, after는 원래대로 표시
                     }
-                    // 다른 타입('좋아요', '댓글', '스크랩')은 위에서 설정한 기본값 사용
+                    // 다른 타입('좋아요', '스크랩')은 위에서 설정한 기본값 사용
 
                     row.innerHTML = `
                         <td>${datePart}<br>${timePart}</td>
