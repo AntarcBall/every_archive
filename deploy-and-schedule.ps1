@@ -24,7 +24,7 @@ $schedulerTimezone = $config.scheduler_timezone
 $imageName = $serviceName
 $fullImageName = "gcr.io/$projectId/$imageName"
 
-Write-Host "=== Google Cloud Deploy & Schedule Script ==="
+Write-Host "=== Google Cloud Deploy & Schedule Script (using Cloud Build) ==="
 Write-Host "Project ID: $projectId"
 Write-Host "Region: $region"
 Write-Host "Service Name: $serviceName"
@@ -33,20 +33,33 @@ Write-Host "Scheduler Frequency: $schedulerFrequency"
 Write-Host "Scheduler Timezone: $schedulerTimezone"
 Write-Host "==========================================="
 
-# 1. Docker 이미지 빌드
-Write-Host "1/4: Building Docker image..."
-docker build -t $imageName .
+# 1. 현재 디렉토리를 .tar.gz로 압축 (Cloud Build에 업로드하기 위함)
+Write-Host "1/5: Compressing source code..."
+$sourceArchive = "source.tar.gz"
+# .git, node_modules, dist 폴더는 제외
+tar -czf $sourceArchive --exclude=.git --exclude=node_modules --exclude=dist .
 
-# 2. Docker 이미지 태그
-Write-Host "2/4: Tagging Docker image..."
-docker tag $imageName $fullImageName
+# 2. Cloud Build로 이미지 빌드 및 푸시
+Write-Host "2/5: Building and pushing Docker image using Cloud Build..."
+$buildArgs = @(
+  "builds", "submit", "--tag", $fullImageName, $sourceArchive,
+  "--project", $projectId
+)
+& gcloud @buildArgs
 
-# 3. Google Container Registry에 이미지 푸시
-Write-Host "3/4: Pushing Docker image to Google Container Registry..."
-docker push $fullImageName
+if ($LASTEXITCODE -ne 0) {
+  Write-Error "Cloud Build failed."
+  # 임시 압축파일 삭제
+  if (Test-Path $sourceArchive) { Remove-Item $sourceArchive }
+  exit $LASTEXITCODE
+}
 
-# 4. Cloud Run에 서비스 배포
-Write-Host "4/4: Deploying to Cloud Run..."
+# 임시 압축파일 삭제
+if (Test-Path $sourceArchive) { Remove-Item $sourceArchive }
+Write-Host "Docker image built and pushed successfully to $fullImageName"
+
+# 3. Cloud Run에 서비스 배포
+Write-Host "3/5: Deploying to Cloud Run..."
 $deployArgs = @(
   "run", "deploy", $serviceName,
   "--image", $fullImageName,
@@ -64,8 +77,8 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "Deployment completed successfully!"
 
-# 5. 배포된 서비스 URL 가져오기
-Write-Host "5/5: Retrieving deployed service URL..."
+# 4. 배포된 서비스 URL 가져오기
+Write-Host "4/5: Retrieving deployed service URL..."
 $describeArgs = @(
   "run", "services", "describe", $serviceName,
   "--platform", "managed",
@@ -82,13 +95,13 @@ if ($LASTEXITCODE -ne 0 -or -not $serviceUrl) {
   Write-Host "Deployed service URL: $serviceUrl"
 }
 
-# 6. Cloud Scheduler 작업 생성/업데이트
+# 5. Cloud Scheduler 작업 생성/업데이트
 # Scheduler 리전 설정 (asia-northeast3가 Scheduler를 지원하는지 확인 필요)
 $schedulerLocation = "asia-northeast1" # 일반적으로 지원됨
 $crawlEndpointUrl = "$serviceUrl/crawl"
 
-Write-Host "6/6: Setting up Cloud Scheduler job..."
-$schedulerArgs = @(
+Write-Host "5/5: Setting up Cloud Scheduler job..."
+$schedulerCreateArgs = @(
   "scheduler", "jobs", "create", "http", $schedulerJobName,
   "--schedule", $schedulerFrequency,
   "--uri", $crawlEndpointUrl,
@@ -97,14 +110,32 @@ $schedulerArgs = @(
   "--location", $schedulerLocation,
   "--project", $projectId
 )
-& gcloud @schedulerArgs
+
+# 먼저 생성 시도
+& gcloud @schedulerCreateArgs
 
 if ($LASTEXITCODE -ne 0) {
-  Write-Warning "Cloud Scheduler job creation might have failed or the job already exists. You may need to update it manually."
-  Write-Host "To update an existing job, you can use:"
-  Write-Host "gcloud scheduler jobs update http $schedulerJobName --schedule=`"$schedulerFrequency`" --uri=`"$crawlEndpointUrl`" --http-method=GET --time-zone=$schedulerTimezone --location=$schedulerLocation --project=$projectId"
+  Write-Warning "Cloud Scheduler job creation failed, might already exist. Attempting to update..."
+  # 생성 실패하면 업데이트 시도
+  $schedulerUpdateArgs = @(
+    "scheduler", "jobs", "update", "http", $schedulerJobName,
+    "--schedule", $schedulerFrequency,
+    "--uri", $crawlEndpointUrl,
+    "--http-method", "GET",
+    "--time-zone", $schedulerTimezone,
+    "--location", $schedulerLocation,
+    "--project", $projectId
+  )
+  & gcloud @schedulerUpdateArgs
+
+  if ($LASTEXITCODE -ne 0) {
+    Write-Error "Cloud Scheduler job update also failed."
+    exit $LASTEXITCODE
+  } else {
+    Write-Host "Cloud Scheduler job updated successfully!"
+  }
 } else {
-  Write-Host "Cloud Scheduler job setup completed successfully!"
+  Write-Host "Cloud Scheduler job created successfully!"
 }
 
 Write-Host "=== Script execution finished ==="
