@@ -32,8 +32,8 @@ WORKDIR /app
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
 
-# 실행에 필요한 의존성만 설치 (선택 1: 새로 설치)
-# RUN npm ci --only=production
+# 실행에 필요한 의존성만 설치 (선택 1: 새로 설치 - 권장)
+RUN npm ci --only=production
 
 # 실행에 필요한 의존성만 설치 (선택 2: 빌드 스테이지의 node_modules에서 복사 - 더 빠를 수 있음)
 # COPY --from=builder /app/node_modules ./node_modules
