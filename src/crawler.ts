@@ -1,11 +1,12 @@
 // src/crawler.ts
 
 import * as https from 'https';
+import * as http from 'http'; // 필요 시 HTTP 리디렉션 처리
+import * as querystring from 'querystring'; // URL 파라미터 인코딩용
+import { parseStringPromise } from 'xml2js'; // XML 파싱용
 import * as fs from 'fs'; // 설정 파일 읽기를 위해 fs 모듈 추가
 import * as path from 'path'; // 경로 처리를 위해 path 모듈 추가
 import * as admin from 'firebase-admin'; // Firebase Admin SDK import 추가
-// v2 API는 JSON을 반환하므로 xml2js는 더 이상 필요하지 않습니다.
-// import { parseStringPromise } from 'xml2js';
 import { getFirestore } from './firebase';
 import { EverytimeArticle, FirestoreArticle } from './types';
 import { logChange } from './logger';
@@ -35,46 +36,39 @@ try {
 }
 
 // --- 설정 부분 ---
-// 실제 크롤링할 게시판 ID를 입력하세요 (예: 393752는 자유게시판)
-// const TARGET_BOARD_ID = '393752'; // 하드코딩 대신 config 사용
-// const LIMIT_NUM = 5; // 하드코딩 대신 config 사용
-
-// Cookie.txt 파일에서 가져온 쿠키 값
-const EVERYTIME_COOKIE = 'x-et-device=6188842; etsid=s%3AuT72G_sPY1fmhSOPWM58iB9DQ7GgP1mD.K7rfrJgccDwsMMmx3W1YcSkPCO7smcN9VwSywt569Bw; _ga=GA1.1.342229312.1754717565; _ga_85ZNEFVRGL=GS2.1.s1755570953$o46$g1$t1755570989$j24$l0$h0';
-
-const EVERYTIME_API_URL = 'https://api.everytime.kr/v2/find/board/article/list';
+// XML API 엔드포인트
+const EVERYTIME_API_URL = 'https://api.everytime.kr/find/board/article/list';
 const EVERYTIME_ORIGIN = 'https://everytime.kr';
 const EVERYTIME_REFERER = 'https://everytime.kr/';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36';
 
+// Cookie.txt 파일에서 가져온 쿠키 값
+const EVERYTIME_COOKIE = 'x-et-device=6188842; etsid=s%3AuT72G_sPY1fmhSOPWM58iB9DQ7GgP1mD.K7rfrJgccDwsMMmx3W1YcSkPCO7smcN9VwSywt569Bw; _ga=GA1.1.342229312.1754717565; _ga_85ZNEFVRGL=GS2.1.s1755570953$o46$g1$t1755570989$j24$l0$h0';
+
 /**
- * 에브리타임 API에서 게시글 목록을 가져옵니다.
- * @param start_num 시작 인덱스 (v2 API에서의 사용 여부 확인 필요)
- * @param limit_num 가져올 게시글 수 (설정 파일에서 읽어옴)
+ * 에브리타임 XML API에서 게시글 목록을 가져옵니다.
+ * @param start_num 시작 인덱스
+ * @param limit_num 가져올 게시글 수 (기본값은 설정 파일에서 읽은 값)
  * @returns 게시글 목록 (Promise)
  */
-const fetchArticlesFromAPI = async (start_num: number, limit_num: number = config.limitNum): Promise<EverytimeArticle[]> => {
+const fetchArticlesFromAPI = async (start_num: number = 0, limit_num: number = config.limitNum): Promise<EverytimeArticle[]> => {
   return new Promise((resolve, reject) => {
-    // 1. 요청 본문(JSON) 구성
-    // 참고: v2 API의 페이징은 start_num/limit_num이 아닐 수 있습니다. 
-    // nextArticleId 등을 사용할 수 있으므로, 실제 동작을 확인하고 조정이 필요할 수 있습니다.
-    // HAR 파일 분석에 따라 limit_num 파라미터를 포함해 봅니다.
-    const postData = JSON.stringify({
-      mode: 'board',
-      boardId: config.boardId, // 설정 파일에서 읽은 boardId 사용
-      limit_num: limit_num, // 요청 파라미터로 받은 limit_num 사용
-      // isBoardInfoRequired: false // 일반적으로 글 목록만 필요함
-      // start_num: start_num, // 필요 시 추가
+    // 1. 요청 파라미터 구성 (application/x-www-form-urlencoded)
+    const postData = querystring.stringify({
+      id: config.boardId,
+      limit_num: limit_num.toString(),
+      start_num: start_num.toString(),
+      moiminfo: 'true' // 필요 시 게시판 정보 포함
     });
 
     // 2. 요청 옵션 구성
     const options: https.RequestOptions = {
       hostname: 'api.everytime.kr',
       port: 443,
-      path: '/v2/find/board/article/list',
+      path: '/find/board/article/list',
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
         'Content-Length': Buffer.byteLength(postData),
         'User-Agent': USER_AGENT,
         'Origin': EVERYTIME_ORIGIN,
@@ -84,7 +78,7 @@ const fetchArticlesFromAPI = async (start_num: number, limit_num: number = confi
       }
     };
 
-    // 2. HTTPS 요청 보내기
+    // 3. HTTPS 요청 보내기
     const req = https.request(options, (res) => {
       let data = '';
 
@@ -95,67 +89,76 @@ const fetchArticlesFromAPI = async (start_num: number, limit_num: number = confi
       res.on('end', async () => {
         try {
           console.log(`API Response Status: ${res.statusCode}`);
+          
           if (res.statusCode === 200) {
-            const result = JSON.parse(data);
-            // console.log('API 응답 본문:', result); // 디버깅용
+            // console.log('Raw XML Response:', data); // 디버깅용
+            
+            // 4. XML 응답 파싱
+            const result = await parseStringPromise(data, { explicitArray: false });
+            
+            // console.log('Parsed XML Object:', JSON.stringify(result, null, 2)); // 디버깅용
 
-            // 4. JSON 응답 파싱 및 EverytimeArticle[]로 변환
-            // 응답 구조 예시: { status: "success", result: { articles: [...] } }
-            if (result.status === 'success' && result.result && Array.isArray(result.result.articles)) {
-              // 설정된 limit_num보다 많은 글이 왔을 경우 자름
-              const articlesToProcess = result.result.articles.slice(0, limit_num);
+            // 5. 파싱된 객체를 EverytimeArticle[]로 변환
+            // 응답 구조: 
+            // <response>
+            //   <moim ... />
+            //   <hashtags />
+            //   <article id="..." ... />
+            //   <article id="..." ... />
+            //   ...
+            // </response>
+            const articles: EverytimeArticle[] = [];
+            
+            // result.response가 존재하고, 그 안에 article이 있는지 확인
+            if (result.response && result.response.article) {
+              // article이 하나만 있을 경우 배열이 아닌 객체로 처리될 수 있으므로, 
+              // 항상 배열로 만듭니다.
+              const articleList = Array.isArray(result.response.article) ? result.response.article : [result.response.article];
               
-              const articles: EverytimeArticle[] = articlesToProcess.map((apiArticle: any) => ({
-                id: apiArticle.id.toString(), // ID는 문자열로 변환
-                title: apiArticle.title,
-                text: apiArticle.text,
-                created_at: apiArticle.createdAt, // 필드명 주의 (camelCase)
-                posvote: apiArticle.posvote,
-                comment: apiArticle.commentCount, // 필드명 매핑
-                scrap_count: apiArticle.scrapCount // 필드명 매핑
-              }));
-              console.log(`API에서 ${articles.length}개의 글을 성공적으로 가져왔습니다. (요청 limit: ${limit_num})`);
-              resolve(articles);
-            } else {
-              console.error('예상치 못한 API 응답 구조:', result);
-              reject(new Error('예상치 못한 API 응답 구조'));
+              // 설정된 limit_num만큼만 처리
+              const articlesToProcess = articleList.slice(0, limit_num);
+
+              for (const article of articlesToProcess) {
+                // XML 파싱 시 속성은 `$` 키 안에 들어갑니다.
+                // 예: <article id="123" title="..." /> -> { $: { id: "123", title: "..." } }
+                if (article && article.$) {
+                  const attr = article.$;
+                  articles.push({
+                    id: attr.id,
+                    title: attr.title || '',
+                    text: attr.text || '',
+                    created_at: attr.created_at || '',
+                    posvote: parseInt(attr.posvote || '0', 10),
+                    comment: parseInt(attr.comment || '0', 10),
+                    scrap_count: parseInt(attr.scrap_count || '0', 10)
+                  });
+                }
+              }
             }
+            
+            console.log(`Successfully fetched and parsed ${articles.length} articles from XML API (requested limit: ${limit_num})`);
+            resolve(articles);
+            
           } else {
-            console.error(`API 요청 실패. Status Code: ${res.statusCode}, Response: ${data}`);
-            reject(new Error(`API 요청 실패. Status Code: ${res.statusCode}`));
+            console.error(`API request failed with status code: ${res.statusCode}, response: ${data}`);
+            reject(new Error(`API request failed with status code: ${res.statusCode}`));
           }
         } catch (error) {
-          console.error('API 응답 파싱 중 오류:', error);
+          console.error('Error parsing XML API response:', error);
           reject(error);
         }
       });
     });
 
     req.on('error', (error) => {
-      console.error('API 요청 중 오류:', error);
+      console.error('Error making XML API request:', error);
       reject(error);
     });
 
-    // 5. 요청 본문 쓰고 요청 종료
+    // 5. 요청 파라미터 쓰고 요청 종료
     req.write(postData);
     req.end();
   });
-};
-
-/**
- * Firestore에서 기존 게시글 목록을 가져옵니다.
- * @returns Firestore에 저장된 게시글 ID와 데이터 매핑
- */
-const getExistingArticlesFromDB = async (): Promise<Record<string, FirestoreArticle>> => {
-  const db = getFirestore();
-  const snapshot = await db.collection('articles').get();
-  const articles: Record<string, FirestoreArticle> = {};
-  
-  snapshot.forEach(doc => {
-    articles[doc.id] = doc.data() as FirestoreArticle;
-  });
-  
-  return articles;
 };
 
 /**
@@ -247,8 +250,8 @@ export const crawlAndArchive = async (): Promise<void> => {
     // 1단계: 초기 아카이빙 (최초 1회 실행) - 생략 (필요 시 별도 엔드포인트 또는 플래그로 처리)
     // 2단계: 지속적 관측
     
-    // 최신 10개 글 가져오기
-    const latestArticles = await fetchArticlesFromAPI(0, 10);
+    // 최신 N개 글 가져오기 (start_num=0, limit_num=config.limitNum)
+    const latestArticles = await fetchArticlesFromAPI(0, config.limitNum);
     console.log(`Fetched ${latestArticles.length} latest articles from API`);
     
     // 기존 DB 게시글 가져오기
@@ -302,4 +305,20 @@ export const crawlAndArchive = async (): Promise<void> => {
     console.error('Error during crawl and archive process:', error);
     throw error; // 상위 호출자에게 에러 전파
   }
+};
+
+/**
+ * Firestore에서 기존 게시글 목록을 가져옵니다.
+ * @returns Firestore에 저장된 게시글 ID와 데이터 매핑
+ */
+const getExistingArticlesFromDB = async (): Promise<Record<string, FirestoreArticle>> => {
+  const db = getFirestore();
+  const snapshot = await db.collection('articles').get();
+  const articles: Record<string, FirestoreArticle> = {};
+  
+  snapshot.forEach(doc => {
+    articles[doc.id] = doc.data() as FirestoreArticle;
+  });
+  
+  return articles;
 };
