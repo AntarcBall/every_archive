@@ -1,0 +1,8 @@
+{
+  "project_id": "massive-glyph-448516-t2",
+  "region": "asia-northeast3",
+  "service_name": "everytime-crawler",
+  "scheduler_job_name": "everytime-crawler-job",
+  "scheduler_frequency": "*/2 * * * *",
+  "scheduler_timezone": "Asia/Seoul"
+}
