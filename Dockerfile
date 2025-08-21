@@ -31,6 +31,7 @@ WORKDIR /app
 # 빌드 스테이지에서 생성된 컴파일된 코드와 package.json 복사
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/crawlconfig.json ./
 
 # 실행에 필요한 의존성만 설치 (선택 1: 새로 설치 - 권장)
 RUN npm ci --only=production

@@ -14,8 +14,9 @@ import { logChange } from './logger';
 // --- 설정 로드 ---
 interface CrawlConfig {
   boardId: string;
-  limitNum: number;
+  limitNum: number; // 페이지 크기
   intervalMinutes: number; // 스케줄러 설정 참고용
+  maxLookback?: number; // 신규 글 탐지를 위해 뒤로 몇 개까지 살펴볼지
 }
 
 let config: CrawlConfig;
@@ -29,10 +30,16 @@ try {
   // 기본값 설정 또는 프로세스 종료
   config = {
     boardId: '393752', // 기본 게시판 ID
-    limitNum: 5,       // 기본 limit
-    intervalMinutes: 2 // 기본 주기
+    limitNum: 5,       // 기본 페이지 크기
+    intervalMinutes: 2, // 기본 주기
+    maxLookback: 50
   };
   // 또는 process.exit(1); 로 종료할 수도 있습니다.
+}
+
+// maxLookback 기본값 보정 (설정 파일에 없을 수 있음)
+if (!config.maxLookback || config.maxLookback <= 0) {
+  config.maxLookback = Math.max(config.limitNum * 3, 50);
 }
 
 // --- 설정 부분 ---
@@ -168,6 +175,32 @@ const fetchArticlesFromAPI = async (start_num: number = 0, limit_num: number = c
     req.write(postData);
     req.end();
   });
+};
+
+/**
+ * 최신 글을 페이지네이션하며 최대 maxFetch개까지 가져옵니다.
+ * 1페이지 당 limitNum 개를 요청하고, start_num을 증가시키며 수집합니다.
+ */
+const fetchLatestArticlesPaginated = async (maxFetch: number): Promise<EverytimeArticle[]> => {
+  const pageSize = config.limitNum;
+  const collected: EverytimeArticle[] = [];
+  let start = 0;
+
+  while (collected.length < maxFetch) {
+    const toFetch = Math.min(pageSize, maxFetch - collected.length);
+    const page = await fetchArticlesFromAPI(start, toFetch);
+    if (page.length === 0) break;
+
+    const known = new Set(collected.map(a => a.id));
+    for (const a of page) {
+      if (!known.has(a.id)) collected.push(a);
+    }
+
+    start += page.length;
+    if (page.length < toFetch) break; // 마지막 페이지 추정
+  }
+
+  return collected;
 };
 
 /**
@@ -393,19 +426,23 @@ export const crawlAndArchive = async (): Promise<void> => {
     // 1단계: 초기 아카이빙 (최초 1회 실행) - 생략 (필요 시 별도 엔드포인트 또는 플래그로 처리)
     // 2단계: 지속적 관측
     
-    // 최신 N개 글 가져오기 (start_num=0, limit_num=config.limitNum)
-    const latestArticles = await fetchArticlesFromAPI(0, config.limitNum);
-    console.log(`Fetched ${latestArticles.length} latest articles from API`);
+  // 최신 글 페이지네이션 수집 (놓침 방지)
+  const maxFetch = config.maxLookback ?? Math.max(config.limitNum * 3, 50);
+  const latestArticles = await fetchLatestArticlesPaginated(maxFetch);
+  console.log(`Fetched ${latestArticles.length} latest articles from API (maxLookback=${maxFetch}, pageSize=${config.limitNum})`);
+  const sampleIds = latestArticles.slice(0, Math.min(10, latestArticles.length)).map(a => a.id).join(', ');
+  console.log(`Sample fetched IDs: ${sampleIds}`);
     
     // 기존 DB 게시글 가져오기
     const existingArticles = await getExistingArticlesFromDB();
     console.log(`Found ${Object.keys(existingArticles).length} existing articles in DB`);
     
-    // 신규 글 감지 및 저장
-    for (const article of latestArticles) {
-      if (!existingArticles[article.id]) {
-        await saveNewArticleToDB(article);
-      }
+    // 신규 글 감지 및 저장 (오래된 순으로 저장)
+    const newArticles = latestArticles.filter(a => !existingArticles[a.id]);
+    console.log(`Detected ${newArticles.length} new articles`);
+    newArticles.sort((a, b) => Number(a.id) - Number(b.id));
+    for (const article of newArticles) {
+      await saveNewArticleToDB(article);
     }
     
     // 변동값 업데이트
