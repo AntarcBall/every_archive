@@ -1,5 +1,5 @@
 {
   "boardId": "393752",
-  "limitNum": 5,
-  "intervalMinutes": 2
+  "limitNum": 10,
+  "intervalMinutes": 1
 }
