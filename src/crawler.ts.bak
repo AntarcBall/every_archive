@@ -128,7 +128,55 @@ const fetchArticlesFromAPI = async (start_num: number = 0, limit_num: number = c
               const articlesToProcess = articleList.slice(0, limit_num);
 
               for (const article of articlesToProcess) {
-                // XML 파싱 시 속성은 `$` 키 안에 들어갑니다.
+                // XML 파싱 시 속성은 `// src/crawler.ts
+
+import * as https from 'https';
+import * as http from 'http'; // 필요 시 HTTP 리디렉션 처리
+import * as querystring from 'querystring'; // URL 파라미터 인코딩용
+import { parseStringPromise } from 'xml2js'; // XML 파싱용
+import * as fs from 'fs'; // 설정 파일 읽기를 위해 fs 모듈 추가
+import * as path from 'path'; // 경로 처리를 위해 path 모듈 추가
+import * as admin from 'firebase-admin'; // Firebase Admin SDK import 추가
+import { getFirestore } from './firebase';
+import { EverytimeArticle, FirestoreArticle } from './types';
+import { logChange } from './logger';
+
+// --- 설정 로드 ---
+interface CrawlConfig {
+  boardId: string;
+  limitNum: number;
+  intervalMinutes: number; // 스케줄러 설정 참고용
+}
+
+let config: CrawlConfig;
+try {
+  const configPath = path.resolve(__dirname, '../crawlconfig.json');
+  const configRaw = fs.readFileSync(configPath, 'utf-8');
+  config = JSON.parse(configRaw);
+  console.log('Crawl configuration loaded:', config);
+} catch (error) {
+  console.error('Failed to load crawlconfig.json. Using default values or exiting.', error);
+  // 기본값 설정 또는 프로세스 종료
+  config = {
+    boardId: '393752', // 기본 게시판 ID
+    limitNum: 5,       // 기본 limit
+    intervalMinutes: 2 // 기본 주기
+  };
+  // 또는 process.exit(1); 로 종료할 수도 있습니다.
+}
+
+// --- 설정 부분 ---
+// XML API 엔드포인트
+const EVERYTIME_ARTICLE_API_URL = 'https://api.everytime.kr/find/board/article/list';
+const EVERYTIME_COMMENT_API_URL = 'https://api.everytime.kr/find/board/comment/list'; // 댓글 API URL 추가
+const EVERYTIME_ORIGIN = 'https://everytime.kr';
+const EVERYTIME_REFERER = 'https://everytime.kr/';
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36';
+
+// Cookie.txt 파일에서 가져온 쿠키 값
+const EVERYTIME_COOKIE = 'x-et-device=6188842; etsid=s%3AuT72G_sPY1fmhSOPWM58iB9DQ7GgP1mD.K7rfrJgccDwsMMmx3W1YcSkPCO7smcN9VwSywt569Bw; _ga=GA1.1.342229312.1754717565; _ga_85ZNEFVRGL=GS2.1.s1755570953$o46$g1$t1755570989$j24$l0$h0';
+
+ 키 안에 들어갑니다.
                 // 예: <article id="123" title="..." /> -> { $: { id: "123", title: "..." } }
                 if (article && article.$) {
                   const attr = article.$;
@@ -170,25 +218,83 @@ const fetchArticlesFromAPI = async (start_num: number = 0, limit_num: number = c
   });
 };
 
+/**\n * 에브리타임 XML API에서 특정 게시글의 댓글 목록을 가져옵니다.\n * @param articleId 게시글 ID\n * @returns 댓글 목록 (Promise)\n */\nconst fetchCommentsForArticle = async (articleId: string): Promise<EverytimeComment[]> => {\n  return new Promise((resolve, reject) => {\n    // 1. 요청 파라미터 구성 (application/x-www-form-urlencoded)\n    const postData = querystring.stringify({\n      id: articleId,\n      limit_num: '-1', // 모든 댓글 가져오기\n      articleInfo: 'true' // 게시글 정보 포함 (선택 사항)\n    });\n\n    // 2. 요청 옵션 구성\n    const options: https.RequestOptions = {\n      hostname: 'api.everytime.kr',\n      port: 443,\n      path: '/find/board/comment/list', // 댓글 API 경로\n      method: 'POST',\n      headers: {\n        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',\n        'Content-Length': Buffer.byteLength(postData),\n        'User-Agent': USER_AGENT,\n        'Origin': EVERYTIME_ORIGIN,\n        'Referer': EVERYTIME_REFERER,\n        // --- 핵심: Cookie.txt에서 가져온 쿠키 사용 ---\n        'Cookie': EVERYTIME_COOKIE\n      }\n    };\n\n    // 3. HTTPS 요청 보내기\n    const req = https.request(options, (res) => {\n      let data = '';\n\n      res.on('data', (chunk) => {\n        data += chunk;\n      });\n\n      res.on('end', async () => {\n        try {\n          console.log(`Comment API Response Status for article ${articleId}: ${res.statusCode}`);\n          \n          if (res.statusCode === 200) {\n            // console.log('Raw Comment XML Response:', data); // 디버깅용\n            \n            // 4. XML 응답 파싱\n            const result = await parseStringPromise(data, { explicitArray: false });\n            \n            // console.log('Parsed Comment XML Object:', JSON.stringify(result, null, 2)); // 디버깅용\n\n            // 5. 파싱된 객체를 EverytimeComment[]로 변환\n            // 응답 구조: \n            // <response>\n            //   <article ... />\n            //   <poll />\n            //   <comment id=\"...\" text=\"...\" user_nickname=\"...\" />\n            //   <comment id=\"...\" text=\"...\" user_nickname=\"...\" />\n            //   ...\n            // </response>\n            const comments: EverytimeComment[] = [];\n            \n            // result.response가 존재하고, 그 안에 comment가 있는지 확인\n            if (result.response && result.response.comment) {\n              // comment가 하나만 있을 경우 배열이 아닌 객체로 처리될 수 있으므로, \n              // 항상 배열로 만듭니다.\n              const commentList = Array.isArray(result.response.comment) ? result.response.comment : [result.response.comment];\n\n              for (const comment of commentList) {\n                // XML 파싱 시 속성은 `// src/crawler.ts
+
+import * as https from 'https';
+import * as http from 'http'; // 필요 시 HTTP 리디렉션 처리
+import * as querystring from 'querystring'; // URL 파라미터 인코딩용
+import { parseStringPromise } from 'xml2js'; // XML 파싱용
+import * as fs from 'fs'; // 설정 파일 읽기를 위해 fs 모듈 추가
+import * as path from 'path'; // 경로 처리를 위해 path 모듈 추가
+import * as admin from 'firebase-admin'; // Firebase Admin SDK import 추가
+import { getFirestore } from './firebase';
+import { EverytimeArticle, FirestoreArticle } from './types';
+import { logChange } from './logger';
+
+// --- 설정 로드 ---
+interface CrawlConfig {
+  boardId: string;
+  limitNum: number;
+  intervalMinutes: number; // 스케줄러 설정 참고용
+}
+
+let config: CrawlConfig;
+try {
+  const configPath = path.resolve(__dirname, '../crawlconfig.json');
+  const configRaw = fs.readFileSync(configPath, 'utf-8');
+  config = JSON.parse(configRaw);
+  console.log('Crawl configuration loaded:', config);
+} catch (error) {
+  console.error('Failed to load crawlconfig.json. Using default values or exiting.', error);
+  // 기본값 설정 또는 프로세스 종료
+  config = {
+    boardId: '393752', // 기본 게시판 ID
+    limitNum: 5,       // 기본 limit
+    intervalMinutes: 2 // 기본 주기
+  };
+  // 또는 process.exit(1); 로 종료할 수도 있습니다.
+}
+
+// --- 설정 부분 ---
+// XML API 엔드포인트
+const EVERYTIME_ARTICLE_API_URL = 'https://api.everytime.kr/find/board/article/list';
+const EVERYTIME_COMMENT_API_URL = 'https://api.everytime.kr/find/board/comment/list'; // 댓글 API URL 추가
+const EVERYTIME_ORIGIN = 'https://everytime.kr';
+const EVERYTIME_REFERER = 'https://everytime.kr/';
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36';
+
+// Cookie.txt 파일에서 가져온 쿠키 값
+const EVERYTIME_COOKIE = 'x-et-device=6188842; etsid=s%3AuT72G_sPY1fmhSOPWM58iB9DQ7GgP1mD.K7rfrJgccDwsMMmx3W1YcSkPCO7smcN9VwSywt569Bw; _ga=GA1.1.342229312.1754717565; _ga_85ZNEFVRGL=GS2.1.s1755570953$o46$g1$t1755570989$j24$l0$h0';
+
+// 댓글 정보를 담는 인터페이스 추가
+interface EverytimeComment {
+  id: string;
+  text: string;
+  user_nickname?: string; // 댓글 작성자 닉네임
+  // parent_id 등 다른 필드도 필요 시 추가 가능
+}
+
 /**
- * 에브리타임 XML API에서 특정 게시글의 댓글 목록을 가져옵니다.
- * @param articleId 게시글 ID
- * @returns 댓글 목록 (Promise)
+ * 에브리타임 XML API에서 게시글 목록을 가져옵니다.
+ * @param start_num 시작 인덱스
+ * @param limit_num 가져올 게시글 수 (기본값은 설정 파일에서 읽은 값)
+ * @returns 게시글 목록 (Promise)
  */
-const fetchCommentsForArticle = async (articleId: string): Promise<EverytimeComment[]> => {
+const fetchArticlesFromAPI = async (start_num: number = 0, limit_num: number = config.limitNum): Promise<EverytimeArticle[]> => {
   return new Promise((resolve, reject) => {
     // 1. 요청 파라미터 구성 (application/x-www-form-urlencoded)
     const postData = querystring.stringify({
-      id: articleId,
-      limit_num: '-1', // 모든 댓글 가져오기
-      articleInfo: 'true' // 게시글 정보 포함 (선택 사항)
+      id: config.boardId,
+      limit_num: limit_num.toString(),
+      start_num: start_num.toString(),
+      moiminfo: 'true' // 필요 시 게시판 정보 포함
     });
 
     // 2. 요청 옵션 구성
     const options: https.RequestOptions = {
       hostname: 'api.everytime.kr',
       port: 443,
-      path: '/find/board/comment/list', // 댓글 API 경로
+      path: '/find/board/article/list', // 경로도 상수 사용 가능
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -211,71 +317,125 @@ const fetchCommentsForArticle = async (articleId: string): Promise<EverytimeComm
 
       res.on('end', async () => {
         try {
-          console.log(`Comment API Response Status for article ${articleId}: ${res.statusCode}`);
+          console.log(`API Response Status: ${res.statusCode}`);
           
           if (res.statusCode === 200) {
-            // console.log('Raw Comment XML Response:', data); // 디버깅용
+            // console.log('Raw XML Response:', data); // 디버깅용
             
             // 4. XML 응답 파싱
             const result = await parseStringPromise(data, { explicitArray: false });
             
-            // console.log('Parsed Comment XML Object:', JSON.stringify(result, null, 2)); // 디버깅용
+            // console.log('Parsed XML Object:', JSON.stringify(result, null, 2)); // 디버깅용
 
-            // 5. 파싱된 객체를 EverytimeComment[]로 변환
+            // 5. 파싱된 객체를 EverytimeArticle[]로 변환
             // 응답 구조: 
             // <response>
-            //   <article ... />
-            //   <poll />
-            //   <comment id="..." text="..." user_nickname="..." />
-            //   <comment id="..." text="..." user_nickname="..." />
+            //   <moim ... />
+            //   <hashtags />
+            //   <article id="..." ... />
+            //   <article id="..." ... />
             //   ...
             // </response>
-            const comments: EverytimeComment[] = [];
+            const articles: EverytimeArticle[] = [];
             
-            // result.response가 존재하고, 그 안에 comment가 있는지 확인
-            if (result.response && result.response.comment) {
-              // comment가 하나만 있을 경우 배열이 아닌 객체로 처리될 수 있으므로, 
+            // result.response가 존재하고, 그 안에 article이 있는지 확인
+            if (result.response && result.response.article) {
+              // article이 하나만 있을 경우 배열이 아닌 객체로 처리될 수 있으므로, 
               // 항상 배열로 만듭니다.
-              const commentList = Array.isArray(result.response.comment) ? result.response.comment : [result.response.comment];
+              const articleList = Array.isArray(result.response.article) ? result.response.article : [result.response.article];
+              
+              // 설정된 limit_num만큼만 처리
+              const articlesToProcess = articleList.slice(0, limit_num);
 
-              for (const comment of commentList) {
-                // XML 파싱 시 속성은 `$` 키 안에 들어갑니다.
-                // 예: <comment id="123" text="..." user_nickname="..." /> -> { $: { id: "123", text: "...", user_nickname: "..." } }
-                if (comment && comment.$) {
-                  const attr = comment.$;
-                  comments.push({
+              for (const article of articlesToProcess) {
+                // XML 파싱 시 속성은 `// src/crawler.ts
+
+import * as https from 'https';
+import * as http from 'http'; // 필요 시 HTTP 리디렉션 처리
+import * as querystring from 'querystring'; // URL 파라미터 인코딩용
+import { parseStringPromise } from 'xml2js'; // XML 파싱용
+import * as fs from 'fs'; // 설정 파일 읽기를 위해 fs 모듈 추가
+import * as path from 'path'; // 경로 처리를 위해 path 모듈 추가
+import * as admin from 'firebase-admin'; // Firebase Admin SDK import 추가
+import { getFirestore } from './firebase';
+import { EverytimeArticle, FirestoreArticle } from './types';
+import { logChange } from './logger';
+
+// --- 설정 로드 ---
+interface CrawlConfig {
+  boardId: string;
+  limitNum: number;
+  intervalMinutes: number; // 스케줄러 설정 참고용
+}
+
+let config: CrawlConfig;
+try {
+  const configPath = path.resolve(__dirname, '../crawlconfig.json');
+  const configRaw = fs.readFileSync(configPath, 'utf-8');
+  config = JSON.parse(configRaw);
+  console.log('Crawl configuration loaded:', config);
+} catch (error) {
+  console.error('Failed to load crawlconfig.json. Using default values or exiting.', error);
+  // 기본값 설정 또는 프로세스 종료
+  config = {
+    boardId: '393752', // 기본 게시판 ID
+    limitNum: 5,       // 기본 limit
+    intervalMinutes: 2 // 기본 주기
+  };
+  // 또는 process.exit(1); 로 종료할 수도 있습니다.
+}
+
+// --- 설정 부분 ---
+// XML API 엔드포인트
+const EVERYTIME_ARTICLE_API_URL = 'https://api.everytime.kr/find/board/article/list';
+const EVERYTIME_COMMENT_API_URL = 'https://api.everytime.kr/find/board/comment/list'; // 댓글 API URL 추가
+const EVERYTIME_ORIGIN = 'https://everytime.kr';
+const EVERYTIME_REFERER = 'https://everytime.kr/';
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36';
+
+// Cookie.txt 파일에서 가져온 쿠키 값
+const EVERYTIME_COOKIE = 'x-et-device=6188842; etsid=s%3AuT72G_sPY1fmhSOPWM58iB9DQ7GgP1mD.K7rfrJgccDwsMMmx3W1YcSkPCO7smcN9VwSywt569Bw; _ga=GA1.1.342229312.1754717565; _ga_85ZNEFVRGL=GS2.1.s1755570953$o46$g1$t1755570989$j24$l0$h0';
+
+ 키 안에 들어갑니다.
+                // 예: <article id="123" title="..." /> -> { $: { id: "123", title: "..." } }
+                if (article && article.$) {
+                  const attr = article.$;
+                  articles.push({
                     id: attr.id,
+                    title: attr.title || '',
                     text: attr.text || '',
-                    user_nickname: attr.user_nickname || '익명' // 기본값 설정
+                    created_at: attr.created_at || '',
+                    posvote: parseInt(attr.posvote || '0', 10),
+                    comment: parseInt(attr.comment || '0', 10),
+                    scrap_count: parseInt(attr.scrap_count || '0', 10)
                   });
                 }
               }
             }
             
-            console.log(`Successfully fetched and parsed ${comments.length} comments for article ${articleId} from XML API`);
-            resolve(comments);
+            console.log(`Successfully fetched and parsed ${articles.length} articles from XML API (requested limit: ${limit_num})`);
+            resolve(articles);
             
           } else {
-            console.error(`Comment API request failed for article ${articleId} with status code: ${res.statusCode}, response: ${data}`);
-            reject(new Error(`Comment API request failed with status code: ${res.statusCode}`));
+            console.error(`API request failed with status code: ${res.statusCode}, response: ${data}`);
+            reject(new Error(`API request failed with status code: ${res.statusCode}`));
           }
         } catch (error) {
-          console.error(`Error parsing Comment XML API response for article ${articleId}:`, error);
+          console.error('Error parsing XML API response:', error);
           reject(error);
         }
       });
     });
 
     req.on('error', (error) => {
-      console.error(`Error making Comment XML API request for article ${articleId}:`, error);
+      console.error('Error making XML API request:', error);
       reject(error);
     });
 
     // 5. 요청 파라미터 쓰고 요청 종료
     req.write(postData);
     req.end();
-  });
-};
+   키 안에 들어갑니다.\n                // 예: <comment id=\"123\" text=\"...\" user_nickname=\"...\" /> -> { $: { id: \"123\", text: \"...\", user_nickname: \"...\" } }\n                if (comment && comment.$) {\n                  const attr = comment.$;\n                  comments.push({\n                    id: attr.id,\n                    text: attr.text || '',\n                    user_nickname: attr.user_nickname || '익명' // 기본값 설정\n                  });\n                }\n              }\n            }\n            \n            console.log(`Successfully fetched and parsed ${comments.length} comments for article ${articleId} from XML API`);\n            resolve(comments);\n            \n          } else {\n            console.error(`Comment API request failed for article ${articleId} with status code: ${res.statusCode}, response: ${data}`);\n            reject(new Error(`Comment API request failed with status code: ${res.statusCode}`));\n          }\n        } catch (error) {\n          console.error(`Error parsing Comment XML API response for article ${articleId}:`, error);\n          reject(error);\n        }\n      });\n    });\n\n    req.on('error', (error) => {\n      console.error(`Error making Comment XML API request for article ${articleId}:`, error);\n      reject(error);\n    });\n\n    // 5. 요청 파라미터 쓰고 요청 종료\n    req.write(postData);\n    req.end();\n  });\n};
 
 /**
  * 새로운 게시글을 Firestore에 저장하고, 해당 글의 댓글도 가져와 로그에 기록합니다.

@@ -3,150 +3,165 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>에브리타임 크롤러 로그</title>
+    <title>게시글/댓글 변경 로그</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
-            margin: 20px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
         }
         h1 {
+            text-align: center;
             color: #333;
+            margin: 0;
+            padding: 20px;
+            background-color: #4CAF50;
+            color: white;
         }
         table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 20px;
-            table-layout: fixed; /* 테이블 레이아웃 고정 */
         }
         th, td {
-            border: 1px solid #ddd;
-            padding: 8px;
+            padding: 12px 15px;
             text-align: left;
-            white-space: nowrap; /* 기본적으로 줄바꿈 방지 */
-            overflow: hidden;
-            text-overflow: ellipsis; /* 넘치는 내용은 ...으로 표시 */
+            border-bottom: 1px solid #ddd;
         }
         th {
             background-color: #f2f2f2;
             font-weight: bold;
-        }
-        tr:nth-child(even) {
-            background-color: #f9f9f9;
+            color: #333;
         }
         tr:hover {
             background-color: #f5f5f5;
         }
-        .loading {
-            font-style: italic;
-            color: #666;
+        .log-type-post {
+            background-color: #e3f2fd; /* Light blue for post creation */
         }
-        .error {
-            color: red;
+        .log-type-comment {
+            background-color: #e8f5e9; /* Light green for comments */
         }
-        /* 특정 열의 너비 조정 */
-        th:nth-child(1), td:nth-child(1) { width: 15%; } /* 타임스탬프 */
-        th:nth-child(2), td:nth-child(2) { width: 10%; } /* 종류 */
-        th:nth-child(3), td:nth-child(3) { width: 20%; } /* 제목 */
-        th:nth-child(4), td:nth-child(4) { width: 25%; } /* 내용 */
-        th:nth-child(5), td:nth-child(5) { width: 15%; } /* 세부사항 */
-        th:nth-child(6), td:nth-child(6) { width: 7.5%; } /* 이전 */
-        th:nth-child(7), td:nth-child(7) { width: 7.5%; } /* 이후 */
+        .log-type-like {
+            background-color: #fff3e0; /* Light orange for likes */
+        }
+        .log-type-scrap {
+            background-color: #fce4ec; /* Light pink for scraps */
+        }
+        /* 반응형 디자인을 위한 미디어 쿼리 */
+        @media (max-width: 768px) {
+            .container {
+                margin: 10px;
+            }
+            table {
+                font-size: 14px;
+            }
+            th, td {
+                padding: 8px 10px;
+            }
+        }
+        @media (max-width: 480px) {
+            table {
+                font-size: 12px;
+            }
+            th, td {
+                padding: 6px 8px;
+            }
+        }
     </style>
 </head>
 <body>
-    <h1>에브리타임 크롤러 로그</h1>
-    <p>최근 로그 항목을 표 형태로 보여줍니다.</p>
-    
-    <table id="logTable">
-        <thead>
-            <tr>
-                <th>타임스탬프</th>
-                <th>종류</th>
-                <th>제목</th>
-                <th>내용</th>
-                <th>세부사항</th>
-                <th>이전</th>
-                <th>이후</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td colspan="7" class="loading">로그를 불러오는 중...</td>
-            </tr>
-        </tbody>
-    </table>
+    <div class="container">
+        <h1>게시글/댓글 변경 로그</h1>
+        <table id="logTable">
+            <thead>
+                <tr>
+                    <th>시간</th>
+                    <th>종류</th>
+                    <th>게시글 제목</th>
+                    <th>내용</th>
+                    <th>작성자 닉네임</th>
+                    <th>ID</th>
+                    <th>댓글 ID</th>
+                    <th>Before</th>
+                    <th>After</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- 로그 데이터는 여기에 JavaScript로 삽입됩니다 -->
+            </tbody>
+        </table>
+    </div>
 
     <script>
-        // 로그 데이터를 가져와서 테이블을 업데이트하는 함수
-        async function fetchAndDisplayLogs() {
-            const tableBody = document.querySelector('#logTable tbody');
-            tableBody.innerHTML = '<tr><td colspan="7" class="loading">로그를 불러오는 중...</td></tr>';
-
+        // 로그 데이터를 가져와서 테이블에 표시하는 함수
+        const fetchAndDisplayLogs = async () => {
             try {
                 const response = await fetch('/logs');
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 const logs = await response.json();
-
-                if (logs.length === 0) {
-                    tableBody.innerHTML = '<tr><td colspan="7">로그 데이터가 없습니다.</td></tr>';
-                    return;
-                }
-
-                // 테이블 본문 초기화
-                tableBody.innerHTML = '';
-
-                // 로그 데이터를 테이블에 추가
+                
+                const tbody = document.querySelector('#logTable tbody');
+                tbody.innerHTML = ''; // 기존 내용 지우기
+                
                 logs.forEach(log => {
                     const row = document.createElement('tr');
                     
-                    // 타임스탬프 분리
-                    const [datePart, timePart] = log.timestamp.split(' | ');
-                    
-                    // 로그 타입에 따라 표시 내용 변경
-                    let title = '-';
-                    let content = '-';
-                    let details = log.details || '-';
-                    let before = log.before !== undefined ? log.before : '-';
-                    let after = log.after !== undefined ? log.after : '-';
-
-                    if (log.type === '글 신규 작성') {
-                        // '글 신규 작성'의 경우, details(제목)을 '제목' 열에, content(내용)을 '내용' 열에 표시
-                        title = details;
-                        content = log.content || '-'; // 로그에 content 필드가 있을 경우 표시
-                        details = '-';
-                        before = '-';
-                        after = '-';
-                    } else if (log.type === '댓글') {
-                        // '댓글'의 경우, details(게시글 제목)을 '제목' 열에도 표시
-                        title = details;
-                        content = '-'; // '댓글' 로그에는 별도의 내용 없음
-                        // details는 원래대로 표시
-                        // before, after는 원래대로 표시
+                    // 로그 종류에 따라 행의 배경색 클래스 추가
+                    switch(log.type) {
+                        case '글 신규 작성':
+                            row.classList.add('log-type-post');
+                            break;
+                        case '댓글':
+                            row.classList.add('log-type-comment');
+                            break;
+                        case '좋아요':
+                            row.classList.add('log-type-like');
+                            break;
+                        case '스크랩':
+                            row.classList.add('log-type-scrap');
+                            break;
+                        default:
+                            // 기본 스타일
                     }
-                    // 다른 타입('좋아요', '스크랩')은 위에서 설정한 기본값 사용
-
+                    
+                    // 각 셀 생성 및 데이터 삽입
                     row.innerHTML = `
-                        <td>${datePart}<br>${timePart}</td>
+                        <td>${log.timestamp}</td>
                         <td>${log.type}</td>
-                        <td>${title}</td>
-                        <td>${content}</td>
-                        <td>${details}</td>
-                        <td>${before}</td>
-                        <td>${after}</td>
+                        <td>${log.details}</td>
+                        <td>${log.content || '-'}</td>
+                        <td>${log.user_nickname || '-'}</td>
+                        <td>${log.article_id || '-'}</td>
+                        <td>${log.comment_id || '-'}</td>
+                        <td>${log.before}</td>
+                        <td>${log.after}</td>
                     `;
-                    tableBody.appendChild(row);
+                    
+                    tbody.appendChild(row);
                 });
-
             } catch (error) {
-                console.error('로그를 불러오는 중 오류 발생:', error);
-                tableBody.innerHTML = `<tr><td colspan="7" class="error">로그를 불러오는 데 실패했습니다: ${error.message}</td></tr>`;
+                console.error('로그 데이터를 가져오는 중 오류 발생:', error);
+                document.querySelector('#logTable tbody').innerHTML = `<tr><td colspan="9">로그 데이터를 가져오는 데 실패했습니다: ${error.message}</td></tr>`;
             }
-        }
+        };
 
-        // 페이지 로드 시 로그 가져오기
-        document.addEventListener('DOMContentLoaded', fetchAndDisplayLogs);
+        // 페이지 로드 시 로그 데이터 가져오기
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchAndDisplayLogs();
+            // 5초마다 새로고침 (실시간 업데이트 효과)
+            // setInterval(fetchAndDisplayLogs, 5000);
+        });
     </script>
 </body>
 </html>
