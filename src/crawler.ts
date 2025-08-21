@@ -371,8 +371,8 @@ const saveNewArticleToDB = async (article: EverytimeArticle): Promise<void> => {
         details: article.title, // 게시글 제목
         content: comment.text,  // 댓글 내용
         user_nickname: comment.user_nickname || '익명', // 댓글 작성자 닉네임
-        before: '-', 
-        after: '-',
+        before: 0, // 댓글은 신규 작성 시 0에서 1로 증가한다고 가정
+        after: 1,  // 댓글은 신규 작성 시 0에서 1로 증가한다고 가정
         article_id: article.id, // 게시글 ID
         comment_id: comment.id  // 댓글 ID
       });
