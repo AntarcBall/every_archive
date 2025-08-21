@@ -8,7 +8,7 @@ import * as fs from 'fs'; // 설정 파일 읽기를 위해 fs 모듈 추가
 import * as path from 'path'; // 경로 처리를 위해 path 모듈 추가
 import * as admin from 'firebase-admin'; // Firebase Admin SDK import 추가
 import { getFirestore } from './firebase';
-import { EverytimeArticle, FirestoreArticle } from './types';
+import { EverytimeArticle, FirestoreArticle, EverytimeComment } from './types';
 import { logChange } from './logger';
 
 // --- 설정 로드 ---
@@ -54,10 +54,11 @@ const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 const EVERYTIME_COOKIE = 'x-et-device=6188842; etsid=s%3AuT72G_sPY1fmhSOPWM58iB9DQ7GgP1mD.K7rfrJgccDwsMMmx3W1YcSkPCO7smcN9VwSywt569Bw; _ga=GA1.1.342229312.1754717565; _ga_85ZNEFVRGL=GS2.1.s1755570953$o46$g1$t1755570989$j24$l0$h0';
 
 // 댓글 정보를 담는 인터페이스 추가
-interface EverytimeComment {
+interface EverytimeCommentLocal {
   id: string;
   text: string;
   user_nickname?: string; // 댓글 작성자 닉네임
+  created_at?: string; // 댓글 작성 시간 추가
   // parent_id 등 다른 필드도 필요 시 추가 가능
 }
 
@@ -208,7 +209,7 @@ const fetchLatestArticlesPaginated = async (maxFetch: number): Promise<Everytime
  * @param articleId 게시글 ID
  * @returns 댓글 목록 (Promise)
  */
-const fetchCommentsForArticle = async (articleId: string): Promise<EverytimeComment[]> => {
+const fetchCommentsForArticle = async (articleId: string): Promise<EverytimeCommentLocal[]> => {
   return new Promise((resolve, reject) => {
     // 1. 요청 파라미터 구성 (application/x-www-form-urlencoded)
     const postData = querystring.stringify({
@@ -263,7 +264,7 @@ const fetchCommentsForArticle = async (articleId: string): Promise<EverytimeComm
             //   <comment id="..." text="..." user_nickname="..." />
             //   ...
             // </response>
-            const comments: EverytimeComment[] = [];
+            const comments: EverytimeCommentLocal[] = [];
             
             // result.response가 존재하고, 그 안에 comment가 있는지 확인
             if (result.response && result.response.comment) {
@@ -279,7 +280,8 @@ const fetchCommentsForArticle = async (articleId: string): Promise<EverytimeComm
                   comments.push({
                     id: attr.id,
                     text: attr.text || '',
-                    user_nickname: attr.user_nickname || '익명' // 기본값 설정
+                    user_nickname: attr.user_nickname || '익명', // 기본값 설정
+                    created_at: attr.created_at || new Date().toISOString() // 댓글 작성 시간 추가
                   });
                 }
               }
@@ -327,13 +329,16 @@ const saveNewArticleToDB = async (article: EverytimeArticle): Promise<void> => {
   await db.collection('articles').doc(article.id).set(firestoreArticle);
   console.log(`New article saved to DB: ${article.id}`);
   
+  // 실제 게시글 작성 시간을 사용하도록 수정
+  const articleTimestamp = new Date(article.created_at).toLocaleString('ko-KR', { 
+    month: '2-digit', day: '2-digit', 
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false
+  }).replace(', ', ' | ').replace(/\./g, '');
+
   // 로그 기록 - 게시글 제목과 내용 모두 저장
   await logChange({
-    timestamp: now.toDate().toLocaleString('ko-KR', { 
-      month: '2-digit', day: '2-digit', 
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-      hour12: false
-    }).replace(', ', ' | ').replace(/\./g, ''),
+    timestamp: articleTimestamp, // 실제 게시글 작성 시간 사용
     type: '글 신규 작성',
     details: article.title, // 게시글 제목
     content: article.text,  // 게시글 내용 (새로 추가)
@@ -347,12 +352,21 @@ const saveNewArticleToDB = async (article: EverytimeArticle): Promise<void> => {
   try {
     const comments = await fetchCommentsForArticle(article.id);
     for (const comment of comments) {
+      // 실제 댓글 작성 시간을 사용하도록 수정 (타입 가드 추가)
+      const commentTimestamp = comment.created_at 
+        ? new Date(comment.created_at).toLocaleString('ko-KR', { 
+            month: '2-digit', day: '2-digit', 
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hour12: false
+          }).replace(', ', ' | ').replace(/\./g, '')
+        : new Date().toLocaleString('ko-KR', { 
+            month: '2-digit', day: '2-digit', 
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hour12: false
+          }).replace(', ', ' | ').replace(/\./g, '');
+
       await logChange({
-        timestamp: now.toDate().toLocaleString('ko-KR', { 
-          month: '2-digit', day: '2-digit', 
-          hour: '2-digit', minute: '2-digit', second: '2-digit',
-          hour12: false
-        }).replace(', ', ' | ').replace(/\./g, ''),
+        timestamp: commentTimestamp, // 실제 댓글 작성 시간 사용
         type: '댓글',
         details: article.title, // 게시글 제목
         content: comment.text,  // 댓글 내용

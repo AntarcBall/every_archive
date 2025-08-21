@@ -19,6 +19,15 @@ export interface FirestoreArticle extends Omit<EverytimeArticle, 'created_at'> {
   updated_at: firestore.Timestamp;
 }
 
+// 댓글 정보를 담는 인터페이스 추가
+export interface EverytimeComment {
+  id: string;
+  text: string;
+  user_nickname?: string; // 댓글 작성자 닉네임
+  created_at?: string; // 댓글 작성 시간 추가
+  // parent_id 등 다른 필드도 필요 시 추가 가능
+}
+
 // 로그 항목 타입 - content, comment_id, user_nickname 필드 추가
 // article_id와 comment_id는 특정 로그 항목이 어떤 글/댓글과 관련된지 식별하기 위해 사용됩니다.
 // 예: '댓글' 타입 로그는 article_id와 comment_id 모두 사용.
