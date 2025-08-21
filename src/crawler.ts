@@ -351,32 +351,32 @@ const saveNewArticleToDB = async (article: EverytimeArticle): Promise<void> => {
   // 댓글 가져오기 및 로그 기록
   try {
     const comments = await fetchCommentsForArticle(article.id);
-    for (const comment of comments) {
-      // 실제 댓글 작성 시간을 사용하도록 수정 (타입 가드 추가)
-      const commentTimestamp = comment.created_at 
-        ? new Date(comment.created_at).toLocaleString('ko-KR', { 
-            month: '2-digit', day: '2-digit', 
-            hour: '2-digit', minute: '2-digit', second: '2-digit',
-            hour12: false
-          }).replace(', ', ' | ').replace(/\./g, '')
-        : new Date().toLocaleString('ko-KR', { 
-            month: '2-digit', day: '2-digit', 
-            hour: '2-digit', minute: '2-digit', second: '2-digit',
-            hour12: false
-          }).replace(', ', ' | ').replace(/\./g, '');
-
+    // 기존 댓글 수 조회
+    const existingArticle = await db.collection('articles').doc(article.id).get();
+    const existingCommentCount = existingArticle.exists ? (existingArticle.data() as FirestoreArticle).comment : 0;
+    
+    // 현재 댓글 수 (새로 가져온 댓글 수)
+    const currentCommentCount = comments.length;
+    
+    // 댓글 수가 변경된 경우에만 로그 기록
+    if (existingCommentCount !== currentCommentCount) {
       await logChange({
-        timestamp: commentTimestamp, // 실제 댓글 작성 시간 사용
+        timestamp: now.toDate().toLocaleString('ko-KR', { 
+          month: '2-digit', day: '2-digit', 
+          hour: '2-digit', minute: '2-digit', second: '2-digit',
+          hour12: false
+        }).replace(', ', ' | ').replace(/\./g, ''),
         type: '댓글',
         details: article.title, // 게시글 제목
-        content: comment.text,  // 댓글 내용
-        user_nickname: comment.user_nickname || '익명', // 댓글 작성자 닉네임
-        before: 0, // 댓글은 신규 작성 시 0에서 1로 증가한다고 가정
-        after: 1,  // 댓글은 신규 작성 시 0에서 1로 증가한다고 가정
-        article_id: article.id, // 게시글 ID
-        comment_id: comment.id  // 댓글 ID
+        content: `총 댓글 수: ${currentCommentCount}`,  // 변경된 댓글 수 정보
+        user_nickname: '시스템', // 시스템에서 기록
+        before: existingCommentCount, 
+        after: currentCommentCount,
+        article_id: article.id // 게시글 ID
       });
     }
+    
+    // 각각의 새 댓글 내용은 별도로 로그에 기록하지 않음 (요구사항에 따라)
   } catch (error) {
     console.error(`Failed to fetch or log comments for article ${article.id}:`, error);
     // 댓글 로그 실패는 게시글 저장 자체에는 영향을 주지 않음
