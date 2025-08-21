@@ -368,15 +368,13 @@ const saveNewArticleToDB = async (article: EverytimeArticle): Promise<void> => {
         }).replace(', ', ' | ').replace(/\./g, ''),
         type: '댓글',
         details: article.title, // 게시글 제목
-        content: `총 댓글 수: ${currentCommentCount}`,  // 변경된 댓글 수 정보
+        content: `총 댓글 수: ${existingCommentCount} -> ${currentCommentCount}`,  // 변경된 댓글 수 정보
         user_nickname: '시스템', // 시스템에서 기록
         before: existingCommentCount, 
         after: currentCommentCount,
         article_id: article.id // 게시글 ID
       });
     }
-    
-    // 각각의 새 댓글 내용은 별도로 로그에 기록하지 않음 (요구사항에 따라)
   } catch (error) {
     console.error(`Failed to fetch or log comments for article ${article.id}:`, error);
     // 댓글 로그 실패는 게시글 저장 자체에는 영향을 주지 않음
